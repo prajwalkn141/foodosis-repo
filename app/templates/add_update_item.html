@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ action | capitalize }} Item{% endblock %}
+
+{% block content %}
+  <div class="flex h-screen bg-gray-100">
+    <!-- Sidebar (same as dashboard for consistency) -->
+    <div class="w-64 bg-white shadow-lg">
+      <div class="p-4 text-center border-b">
+        <h2 class="text-xl font-bold text-blue-600">Foodosis</h2>
+      </div>
+      <nav class="mt-4">
+        <a href="{{ url_for('dashboard') }}" class="block p-4 text-gray-600 hover:bg-blue-100 hover:text-blue-600">Dashboard</a>
+        <a href="#" class="block p-4 text-gray-600 hover:bg-blue-100 hover:text-blue-600 active">Add/Update Item</a>
+        <a href="{{ url_for('logout') }}" class="block p-4 text-gray-600 hover:bg-blue-100 hover:text-blue-600">Logout</a>
+      </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="flex-1 p-6 overflow-y-auto">
+      <h1 class="text-3xl font-bold mb-6 text-gray-800">{{ action | capitalize }} Item</h1>
+      
+      <!-- Attractive Form Card -->
+      <div class="bg-white p-6 rounded-lg shadow-lg max-w-md mx-auto">
+        <form method="POST" enctype="multipart/form-data" class="space-y-4">
+          <div>
+            <label for="name" class="block text-sm font-medium text-gray-700">Name</label>
+            <input type="text" name="name" id="name" class="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:border-blue-500 focus:ring-blue-500" value="{{ item.name if item else '' }}" required>
+          </div>
+          <div>
+            <label for="quantity" class="block text-sm font-medium text-gray-700">Quantity</label>
+            <input type="number" step="0.01" name="quantity" id="quantity" class="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:border-blue-500 focus:ring-blue-500" value="{{ item.quantity if item else '' }}" required>
+          </div>
+          <div>
+            <label for="unit" class="block text-sm font-medium text-gray-700">Unit</label>
+            <input type="text" name="unit" id="unit" class="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:border-blue-500 focus:ring-blue-500" value="{{ item.unit if item else '' }}" required>
+          </div>
+          <div>
+            <label for="expiration_date" class="block text-sm font-medium text-gray-700">Expiration Date (optional)</label>
+            <input type="date" name="expiration_date" id="expiration_date" class="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:border-blue-500 focus:ring-blue-500" value="{{ item.expiration_date if item else '' }}">
+          </div>
+          {% if action == 'add' %}
+            <div>
+              <label for="file" class="block text-sm font-medium text-gray-700">File (optional)</label>
+              <input type="file" name="file" id="file" class="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:border-blue-500 focus:ring-blue-500">
+            </div>
+          {% endif %}
+          <button type="submit" class="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"> {{ action | capitalize }} Item</button>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}
