@@ -35,8 +35,6 @@ def lambda_handler(event, context):
         item_id = event['item_id']
         print(f"Direct invocation for item ID: {item_id}")
         try:
-            # You need a get_item_by_id function in rds_utils
-            # For now, we'll fetch all and filter, but a direct query is better
             all_items = rds_utils.get_items()
             specific_item = next((i for i in all_items if i['id'] == item_id), None)
             if specific_item:
@@ -79,39 +77,62 @@ def lambda_handler(event, context):
     for item in items_to_check:
         item_id = item.get('id', 'N/A')
         item_name = item.get('name', 'Unknown Item')
-        expiry_date_obj = item.get('expiration_date')
+        expiry_date_str = item.get('expiration_date')
         
-        # Ensure expiry_date_obj is a date object and within 7 days from today
-        if expiry_date_obj and isinstance(expiry_date_obj, datetime) and (expiry_date_obj.date() - datetime.now().date()).days <= 7:
-            expiry_date_str = expiry_date_obj.strftime('%Y-%m-%d')
-            
-            subject = f"Foodosis Alert: Item '{item_name}' Expiring Soon!"
-            message = (
-                f"Dear User,\n\n"
-                f"This is an automated alert from Foodosis regarding your inventory.\n\n"
-                f"The item '{item_name}' (ID: {item_id}) is expiring soon.\n"
-                f"Its expiration date is: {expiry_date_str}.\n\n"
-                f"Please take necessary action to manage your stock.\n\n"
-                f"Thank you,\n"
-                f"Foodosis Inventory Management Team"
-            )
-
-            print(f"Publishing SNS message for item: {item_name} (ID: {item_id}, Expiry: {expiry_date_str})")
+        if expiry_date_str:
             try:
-                sns_client.publish(
-                    TopicArn=SNS_TOPIC_ARN,
-                    Subject=subject,
-                    Message=message
-                )
-                print(f"SNS message published successfully for item: {item_name}")
-                notifications_sent += 1
+                expiry_date_obj = datetime.strptime(expiry_date_str, '%Y-%m-%d').date()
+                creation_date = datetime.now().date()  # Approximate creation date
+                days_until_expiry = (expiry_date_obj - creation_date).days
+                
+                # Prioritize event-provided days_until_expiry for direct invocation
+                if 'days_until_expiry' in event:
+                    event_days = event.get('days_until_expiry')
+                    if isinstance(event_days, (int, float)) and 0 <= event_days <= 365:  # Validate range
+                        days_until_expiry = event_days
+                        print(f"Using event-provided days_until_expiry: {days_until_expiry}")
+                    else:
+                        print(f"Invalid days_until_expiry from event: {event_days}, falling back to calculated value.")
+
+                if days_until_expiry <= 7:  # Threshold of 7 days inclusive
+                    subject = f"Foodosis Alert: Item '{item_name}' Expiring Soon!"
+                    message = (
+                        f"Dear User,\n\n"
+                        f"This is an automated alert from Foodosis regarding your inventory.\n\n"
+                        f"The item '{item_name}' (ID: {item_id}) is expiring soon.\n"
+                        f"Expiration date: {expiry_date_str}.\n"
+                        f"Days until expiry: {days_until_expiry}.\n\n"
+                        f"Please take necessary action to manage your stock.\n\n"
+                        f"Thank you,\n"
+                        f"Foodosis Inventory Management Team"
+                    )
+
+                    print(f"Publishing SNS message for item: {item_name} (ID: {item_id}, Expiry: {expiry_date_str}, Days: {days_until_expiry})")
+                    try:
+                        response = sns_client.publish(
+                            TopicArn=SNS_TOPIC_ARN,
+                            Subject=subject,
+                            Message=message
+                        )
+                        print(f"SNS message published successfully for item: {item_name}, Response: {response}")
+                        notifications_sent += 1
+                    except Exception as e:
+                        print(f"Error publishing SNS message for item {item_name}: {e}")
+                        # Log detailed error for debugging
+                        if "AccessDenied" in str(e):
+                            print("AccessDenied: Check Lambda execution role permissions for SNS.")
+                        elif "InvalidParameterValue" in str(e):
+                            print("InvalidParameterValue: Verify SNS_TOPIC_ARN and message content.")
+                else:
+                    print(f"Item {item_name} (ID: {item_id}) does not meet the immediate expiry criteria (within 7 days). Days until expiry: {days_until_expiry}")
+            except ValueError as ve:
+                print(f"Error parsing expiry date for item {item_name}: {ve}")
             except Exception as e:
-                print(f"Error publishing SNS message for item {item_name}: {e}")
+                print(f"Unexpected error processing item {item_name}: {e}")
         else:
-            print(f"Item {item_name} (ID: {item_id}) does not meet the immediate expiry criteria (within 7 days from today).")
+            print(f"Item {item_name} (ID: {item_id}) has no expiration date.")
 
     return {
         'statusCode': 200,
         'body': json.dumps(f'Successfully processed. Notifications sent: {notifications_sent}.')
     }
-

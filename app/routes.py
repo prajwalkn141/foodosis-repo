@@ -1,11 +1,10 @@
 from flask import request, session, render_template, redirect, url_for, flash
 from app import app
-from foodosis_aws_utils import rds_utils, s3_utils, cloudwatch_utils, auth_utils
+from foodosis_aws_utils import rds_utils, s3_utils, cloudwatch_utils, auth_utils, lambda_utils  # Using lambda_utils
 from dotenv import load_dotenv
 import os
-import boto3
-from datetime import datetime, timedelta # Added for date calculations
-import json # Added for JSON payload
+from datetime import datetime, timedelta
+import json
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -44,7 +43,7 @@ def add_item():
         try:
             quantity = float(request.form['quantity'])
         except ValueError as e:
-            print(f"Error: Invalid quantity - {e}") # Debug print
+            print(f"Error: Invalid quantity - {e}")  # Debug print
             flash(f"Invalid quantity: {str(e)}", 'error')
             return render_template('add_update_item.html', action='add', error=f"Invalid quantity: {str(e)}")
         unit = request.form['unit']
@@ -60,13 +59,13 @@ def add_item():
         fresh_region = os.getenv('AWS_REGION', 'us-east-1')
         fresh_s3_bucket = os.getenv('S3_BUCKET')
 
-        print(f"Loaded AWS_ACCESS_KEY_ID: {fresh_access_key}") # Debug print
-        print(f"Loaded S3_BUCKET: {fresh_s3_bucket}") # Debug print
+        print(f"Loaded AWS_ACCESS_KEY_ID: {fresh_access_key}")  # Debug print
+        print(f"Loaded S3_BUCKET: {fresh_s3_bucket}")  # Debug print
 
         if file and file.filename:
             try:
                 if not fresh_s3_bucket:
-                    print("Error: S3_BUCKET environment variable not set.") # Debug print
+                    print("Error: S3_BUCKET environment variable not set.")  # Debug print
                     flash("S3 bucket not configured. Please check your .env file.", 'error')
                     return render_template('add_update_item.html', action='add', error="S3 bucket not configured. Please check your .env file.")
 
@@ -74,72 +73,57 @@ def add_item():
 
                 s3_utils.update_s3_client(fresh_access_key, fresh_secret_key, fresh_session_token, fresh_region)
 
-                print(f"Attempting S3 upload for key: {key}") # Debug print
+                print(f"Attempting S3 upload for key: {key}")  # Debug print
                 s3_file_key = s3_utils.upload_file(file, key)
-                print(f"S3 upload successful. Key: {s3_file_key}") # Debug print
+                print(f"S3 upload successful. Key: {s3_file_key}")  # Debug print
 
             except Exception as e:
-                print(f"Error: S3 upload failed - {e}") # Debug print
+                print(f"Error: S3 upload failed - {e}")  # Debug print
                 flash(f"S3 upload failed: {str(e)}", 'error')
                 return render_template('add_update_item.html', action='add', error=f"S3 upload failed: {str(e)}")
         else:
-            print("No file provided for upload.") # Debug print
+            print("No file provided for upload.")  # Debug print
 
-        item_id = None # Initialize item_id
+        item_id = None  # Initialize item_id
         try:
-            print(f"Attempting to add item to RDS: Name={name}, Quantity={quantity}, Unit={unit}, Expiration={expiration_date_str}, S3_Key={s3_file_key}") # Debug print
+            print(f"Attempting to add item to RDS: Name={name}, Quantity={quantity}, Unit={unit}, Expiration={expiration_date_str}, S3_Key={s3_file_key}")  # Debug print
             item_id = rds_utils.add_item(name, quantity, unit, expiration_date_str, s3_file_key)
-            print(f"Item added to RDS successfully. Item ID: {item_id}") # Debug print
+            print(f"Item added to RDS successfully. Item ID: {item_id}")  # Debug print
             flash('Item added successfully!', 'success')
 
-            # --- NEW: Check for immediate expiry and invoke Lambda ---
+            # Check for immediate expiry and invoke Lambda using lambda_utils
             if expiration_date_str:
-                try:
-                    expiration_date_obj = datetime.strptime(expiration_date_str, '%Y-%m-%d')
-                    days_until_expiry = (expiration_date_obj.date() - datetime.now().date()).days
+                expiration_date_obj = datetime.strptime(expiration_date_str, '%Y-%m-%d')
+                creation_date = datetime.now().date()  # Approximate creation date
+                days_until_expiry = (expiration_date_obj.date() - creation_date).days
+                
+                if days_until_expiry <= 7:  # Threshold of 7 days inclusive
+                    print(f"Item '{name}' (ID: {item_id}) expires in {days_until_expiry} days. Invoking Lambda for immediate check.")
                     
-                    if days_until_expiry <= 7:
-                        print(f"Item '{name}' (ID: {item_id}) expires in {days_until_expiry} days. Invoking Lambda for immediate check.")
-                        
-                        # Initialize Lambda client using Flask app's credentials
-                        lambda_client = boto3.client(
-                            'lambda',
-                            aws_access_key_id=fresh_access_key,
-                            aws_secret_access_key=fresh_secret_key,
-                            aws_session_token=fresh_session_token,
-                            region_name=fresh_region
-                        )
-                        
-                        # Payload for the Lambda function
-                        payload = {"item_id": item_id}
-                        
-                        try:
-                            response = lambda_client.invoke(
-                                FunctionName='foodosis-expiration-check-lambda', # Make sure this matches your Lambda function name
-                                InvocationType='Event', # 'Event' for asynchronous invocation (don't wait for response)
-                                Payload=json.dumps(payload)
-                            )
-                            print(f"Lambda invocation response: {response}")
-                            if response.get('StatusCode') == 202: # 202 is for successful asynchronous invocation
-                                flash("Immediate expiry check triggered successfully!", 'info')
-                            else:
-                                flash("Failed to trigger immediate expiry check. Check Lambda logs.", 'warning')
-                        except Exception as lambda_e:
-                            print(f"Error invoking Lambda for immediate check: {lambda_e}")
-                            flash(f"Error triggering immediate expiry check: {str(lambda_e)}", 'error')
-                    else:
-                        print(f"Item '{name}' (ID: {item_id}) expires in {days_until_expiry} days. No immediate check needed.")
-
-                except ValueError:
-                    print(f"Warning: Could not parse expiration date '{expiration_date_str}' for immediate check.")
-                except Exception as date_e:
-                    print(f"Unexpected error during date calculation for immediate check: {date_e}")
-            # --- END NEW: Check for immediate expiry and invoke Lambda ---
+                    payload = {
+                        "item_id": item_id,
+                        "name": name,
+                        "expiration_date": expiration_date_str,
+                        "days_until_expiry": days_until_expiry
+                    }
+                    
+                    try:
+                        response = lambda_utils.invoke_lambda('foodosis-expiration-check-lambda', payload, fresh_region)  # Corrected function name
+                        print(f"Lambda invocation response: {response}")
+                        if response.get('StatusCode') == 202:
+                            flash("Immediate expiry check triggered successfully!", 'info')
+                        else:
+                            flash("Failed to trigger immediate expiry check. Check Lambda logs.", 'warning')
+                    except Exception as lambda_e:
+                        print(f"Error invoking Lambda for immediate check: {lambda_e}")
+                        flash(f"Error triggering immediate expiry check: {str(lambda_e)}", 'error')
+                else:
+                    print(f"Item '{name}' (ID: {item_id}) expires in {days_until_expiry} days. No immediate check needed.")
 
             return redirect(url_for('dashboard'))
 
         except Exception as e:
-            print(f"Error: Database error - {e}") # Debug print
+            print(f"Error: Database error - {e}")  # Debug print
             flash(f"Database error: {str(e)}", 'error')
             return render_template('add_update_item.html', action='add', error=f"Database error: {str(e)}")
     
