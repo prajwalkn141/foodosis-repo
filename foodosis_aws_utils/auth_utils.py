@@ -1,12 +1,7 @@
-from .rds_utils import get_connection
+from . import rds_utils
 
 def validate_user(username, password):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT password_hash FROM Admin WHERE username = %s", (username,))
-    stored_data = cur.fetchone()
-    cur.close()
-    conn.close()
-    if stored_data and stored_data[0] == password and username.endswith('@gmail.com'):
-        return True
+    # Use the secure validation method
+    if username.endswith('@gmail.com'):
+        return rds_utils.validate_user_secure(username, password)
     return False

@@ -6,6 +6,9 @@ import os
 import boto3
 from datetime import datetime, timedelta # Added for date calculations
 import json # Added for JSON payload
+from food_safety_lib import get_expiry_status, get_safety_score, calculate_shelf_life, generate_alert_message
+
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -23,6 +26,47 @@ def login():
             return render_template('login.html', error="Invalid username or password, or email must end with @gmail.com")
     return render_template('login.html')
 
+
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        confirm_password = request.form['confirm_password']
+        
+        # Validation
+        if not username.endswith('@gmail.com'):
+            flash('Email must end with @gmail.com', 'error')
+            return render_template('signup.html')
+        
+        if password != confirm_password:
+            flash('Passwords do not match', 'error')
+            return render_template('signup.html')
+        
+        if len(password) < 6:
+            flash('Password must be at least 6 characters long', 'error')
+            return render_template('signup.html')
+        
+        # Check if user already exists
+        if rds_utils.user_exists(username):
+            flash('User already exists with this email', 'error')
+            return render_template('signup.html')
+        
+        # Create new user with properly hashed password
+        success = rds_utils.create_user(username, password)
+        
+        if success:
+            flash('Account created successfully! Please login.', 'success')
+            return redirect(url_for('login'))
+        else:
+            flash('Error creating account. Please try again.', 'error')
+            return render_template('signup.html')
+    
+    return render_template('signup.html')
+
+
+
 @app.route('/dashboard')
 def dashboard():
     if not session.get('logged_in'):
@@ -37,22 +81,28 @@ def dashboard():
 
 @app.route('/add_item', methods=['GET', 'POST'])
 def add_item():
-    # if not session.get('logged_in'):  # Temporarily omitted for testing
-    #     return redirect(url_for('login'))
     if request.method == 'POST':
         name = request.form['name']
         try:
             quantity = float(request.form['quantity'])
         except ValueError as e:
-            print(f"Error: Invalid quantity - {e}") # Debug print
+            print(f"Error: Invalid quantity - {e}")
             flash(f"Invalid quantity: {str(e)}", 'error')
             return render_template('add_update_item.html', action='add', error=f"Invalid quantity: {str(e)}")
+        
         unit = request.form['unit']
         expiration_date_str = request.form.get('expiration_date')
         file = request.files.get('file')
         s3_file_key = None
 
-        # Always load fresh credentials from .env for the S3 client to be updated
+        # NEW: Use food_safety_lib to calculate shelf life
+        if not expiration_date_str:
+            # If no expiration date provided, calculate based on product type
+            shelf_life_days = calculate_shelf_life(name)
+            suggested_expiry = (datetime.now() + timedelta(days=shelf_life_days)).strftime('%Y-%m-%d')
+            flash(f"💡 Tip: Based on the product type, suggested expiration date is {suggested_expiry} ({shelf_life_days} days)", 'info')
+
+        # Load fresh credentials for S3
         load_dotenv()
         fresh_access_key = os.getenv('AWS_ACCESS_KEY_ID')
         fresh_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
@@ -60,86 +110,79 @@ def add_item():
         fresh_region = os.getenv('AWS_REGION', 'us-east-1')
         fresh_s3_bucket = os.getenv('S3_BUCKET')
 
-        print(f"Loaded AWS_ACCESS_KEY_ID: {fresh_access_key}") # Debug print
-        print(f"Loaded S3_BUCKET: {fresh_s3_bucket}") # Debug print
-
         if file and file.filename:
             try:
                 if not fresh_s3_bucket:
-                    print("Error: S3_BUCKET environment variable not set.") # Debug print
+                    print("Error: S3_BUCKET environment variable not set.")
                     flash("S3 bucket not configured. Please check your .env file.", 'error')
-                    return render_template('add_update_item.html', action='add', error="S3 bucket not configured. Please check your .env file.")
+                    return render_template('add_update_item.html', action='add', error="S3 bucket not configured.")
 
                 key = f"inventory/{name.replace(' ', '_')}_{file.filename}"
-
                 s3_utils.update_s3_client(fresh_access_key, fresh_secret_key, fresh_session_token, fresh_region)
-
-                print(f"Attempting S3 upload for key: {key}") # Debug print
                 s3_file_key = s3_utils.upload_file(file, key)
-                print(f"S3 upload successful. Key: {s3_file_key}") # Debug print
+                print(f"S3 upload successful. Key: {s3_file_key}")
 
             except Exception as e:
-                print(f"Error: S3 upload failed - {e}") # Debug print
+                print(f"Error: S3 upload failed - {e}")
                 flash(f"S3 upload failed: {str(e)}", 'error')
                 return render_template('add_update_item.html', action='add', error=f"S3 upload failed: {str(e)}")
-        else:
-            print("No file provided for upload.") # Debug print
 
-        item_id = None # Initialize item_id
+        item_id = None
         try:
-            print(f"Attempting to add item to RDS: Name={name}, Quantity={quantity}, Unit={unit}, Expiration={expiration_date_str}, S3_Key={s3_file_key}") # Debug print
             item_id = rds_utils.add_item(name, quantity, unit, expiration_date_str, s3_file_key)
-            print(f"Item added to RDS successfully. Item ID: {item_id}") # Debug print
             flash('Item added successfully!', 'success')
 
-            # --- NEW: Check for immediate expiry and invoke Lambda ---
+            # NEW: Use food_safety_lib for safety analysis
             if expiration_date_str:
-                try:
-                    expiration_date_obj = datetime.strptime(expiration_date_str, '%Y-%m-%d')
-                    days_until_expiry = (expiration_date_obj.date() - datetime.now().date()).days
+                # Get expiry status
+                status, emoji, days_remaining = get_expiry_status(expiration_date_str)
+                
+                # Get safety score
+                safety_info = get_safety_score(expiration_date_str, quantity)
+                
+                # Display safety information
+                flash(f"{emoji} Expiry Status: {status} - {days_remaining} days remaining", 'info')
+                flash(f"🛡️ Safety Score: {safety_info['score']}/100 - Risk Level: {safety_info['risk_level']}", 'info')
+                
+                # Show recommendations
+                for rec in safety_info['recommendations']:
+                    flash(rec, 'warning')
+                
+                # Check for immediate expiry and invoke Lambda
+                if days_remaining <= 7:
+                    print(f"Item '{name}' (ID: {item_id}) expires in {days_remaining} days. Invoking Lambda.")
                     
-                    if days_until_expiry <= 7:
-                        print(f"Item '{name}' (ID: {item_id}) expires in {days_until_expiry} days. Invoking Lambda for immediate check.")
-                        
-                        # Initialize Lambda client using Flask app's credentials
-                        lambda_client = boto3.client(
-                            'lambda',
-                            aws_access_key_id=fresh_access_key,
-                            aws_secret_access_key=fresh_secret_key,
-                            aws_session_token=fresh_session_token,
-                            region_name=fresh_region
+                    lambda_client = boto3.client(
+                        'lambda',
+                        aws_access_key_id=fresh_access_key,
+                        aws_secret_access_key=fresh_secret_key,
+                        aws_session_token=fresh_session_token,
+                        region_name=fresh_region
+                    )
+                    
+                    payload = {"item_id": item_id}
+                    
+                    try:
+                        response = lambda_client.invoke(
+                            FunctionName='foodosis-expiration-check-lambda',
+                            InvocationType='Event',
+                            Payload=json.dumps(payload)
                         )
-                        
-                        # Payload for the Lambda function
-                        payload = {"item_id": item_id}
-                        
-                        try:
-                            response = lambda_client.invoke(
-                                FunctionName='foodosis-expiration-check-lambda', # Make sure this matches your Lambda function name
-                                InvocationType='Event', # 'Event' for asynchronous invocation (don't wait for response)
-                                Payload=json.dumps(payload)
-                            )
-                            print(f"Lambda invocation response: {response}")
-                            if response.get('StatusCode') == 202: # 202 is for successful asynchronous invocation
-                                flash("Immediate expiry check triggered successfully!", 'info')
-                            else:
-                                flash("Failed to trigger immediate expiry check. Check Lambda logs.", 'warning')
-                        except Exception as lambda_e:
-                            print(f"Error invoking Lambda for immediate check: {lambda_e}")
-                            flash(f"Error triggering immediate expiry check: {str(lambda_e)}", 'error')
-                    else:
-                        print(f"Item '{name}' (ID: {item_id}) expires in {days_until_expiry} days. No immediate check needed.")
-
-                except ValueError:
-                    print(f"Warning: Could not parse expiration date '{expiration_date_str}' for immediate check.")
-                except Exception as date_e:
-                    print(f"Unexpected error during date calculation for immediate check: {date_e}")
-            # --- END NEW: Check for immediate expiry and invoke Lambda ---
+                        if response.get('StatusCode') == 202:
+                            # Generate detailed alert message using the library
+                            alert_msg = generate_alert_message(name, expiration_date_str, quantity, unit)
+                            print(f"Alert message: {alert_msg}")
+                            flash("📧 Email notification triggered for expiring item!", 'info')
+                        else:
+                            flash("Failed to trigger email notification.", 'warning')
+                    except Exception as lambda_e:
+                        print(f"Error invoking Lambda: {lambda_e}")
+                        flash(f"Error triggering notification: {str(lambda_e)}", 'error')
 
             return redirect(url_for('dashboard'))
 
         except Exception as e:
-            print(f"Error: Database error - {e}") # Debug print
+            print(f"Error: Database error - {e}")
             flash(f"Database error: {str(e)}", 'error')
             return render_template('add_update_item.html', action='add', error=f"Database error: {str(e)}")
     
@@ -218,3 +261,67 @@ def logout():
     session.clear()
     flash('You have been logged out.', 'info')
     return redirect(url_for('login'))
+
+@app.route('/safety_dashboard')
+def safety_dashboard():
+    """Food safety dashboard using our custom library"""
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+    
+    # Import our custom library
+    from food_safety_lib import get_batch_alerts, get_safety_score, calculate_waste_cost
+    
+    # Get all inventory items
+    items = rds_utils.get_items()
+    
+    # Process alerts using our library
+    alerts = get_batch_alerts(items)
+    
+    # Calculate safety scores for all items
+    safety_analysis = []
+    total_potential_waste = 0.0
+    
+    for item in items:
+        if item.get('expiration_date'):
+            # Get safety score
+            safety_info = get_safety_score(
+                str(item['expiration_date']), 
+                item.get('quantity', 0)
+            )
+            
+            # Calculate potential waste (assuming $10 per unit for demo)
+            waste_cost = calculate_waste_cost(
+                item.get('quantity', 0),
+                10.0,  # Unit cost
+                str(item['expiration_date'])
+            )
+            
+            total_potential_waste += waste_cost
+            
+            safety_analysis.append({
+                'item': item,
+                'safety_score': safety_info['score'],
+                'risk_level': safety_info['risk_level'],
+                'risk_color': safety_info['risk_color'],
+                'recommendations': safety_info['recommendations'],
+                'potential_waste_cost': waste_cost
+            })
+    
+    # Sort by safety score (lowest first - highest risk)
+    safety_analysis.sort(key=lambda x: x['safety_score'])
+    
+    # Count items by category
+    alert_counts = {
+        'expired': len(alerts['expired']),
+        'critical': len(alerts['critical']),
+        'warning': len(alerts['warning']),
+        'caution': len(alerts['caution']),
+        'normal': len(alerts['normal'])
+    }
+    
+    return render_template('safety_dashboard.html',
+        alerts=alerts,
+        alert_counts=alert_counts,
+        safety_analysis=safety_analysis[:10],  # Top 10 risky items
+        total_potential_waste=total_potential_waste
+    )

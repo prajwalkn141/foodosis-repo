@@ -1,0 +1,160 @@
+{% extends 'base.html' %}
+
+{% block title %}Food Safety Dashboard{% endblock %}
+
+{% block content %}
+<div class="flex h-screen">
+    <!-- Sidebar -->
+    <div class="sidebar w-64 bg-white shadow-lg">
+        <div class="sidebar-header p-4 border-b text-center">
+            <h2 class="text-xl font-bold text-blue-600">Foodosis</h2>
+        </div>
+        <nav class="sidebar-nav mt-4">
+            <a href="{{ url_for('dashboard') }}" class="nav-item block p-4 text-gray-600 hover:bg-blue-100 hover:text-blue-600">Dashboard</a>
+            <a href="{{ url_for('safety_dashboard') }}" class="nav-item block p-4 text-gray-600 hover:bg-blue-100 hover:text-blue-600 bg-blue-100 text-blue-600">Safety Dashboard</a>
+            <a href="{{ url_for('add_item') }}" class="nav-item block p-4 text-gray-600 hover:bg-blue-100 hover:text-blue-600">Add Item</a>
+            <a href="{{ url_for('logout') }}" class="nav-item block p-4 text-gray-600 hover:bg-blue-100 hover:text-blue-600">Logout</a>
+        </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content flex-1 p-6 overflow-y-auto bg-gray-100">
+        <h1 class="text-3xl font-bold mb-6 text-gray-800">🛡️ Food Safety Dashboard</h1>
+
+        <!-- Alert Summary Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div class="bg-red-500 text-white p-4 rounded-lg shadow-lg">
+                <h3 class="text-lg font-semibold">🚫 Expired</h3>
+                <p class="text-3xl font-bold">{{ alert_counts.expired }}</p>
+            </div>
+            <div class="bg-orange-500 text-white p-4 rounded-lg shadow-lg">
+                <h3 class="text-lg font-semibold">🔴 Critical</h3>
+                <p class="text-3xl font-bold">{{ alert_counts.critical }}</p>
+            </div>
+            <div class="bg-yellow-500 text-white p-4 rounded-lg shadow-lg">
+                <h3 class="text-lg font-semibold">🟡 Warning</h3>
+                <p class="text-3xl font-bold">{{ alert_counts.warning }}</p>
+            </div>
+            <div class="bg-blue-500 text-white p-4 rounded-lg shadow-lg">
+                <h3 class="text-lg font-semibold">🟠 Caution</h3>
+                <p class="text-3xl font-bold">{{ alert_counts.caution }}</p>
+            </div>
+            <div class="bg-green-500 text-white p-4 rounded-lg shadow-lg">
+                <h3 class="text-lg font-semibold">🟢 Normal</h3>
+                <p class="text-3xl font-bold">{{ alert_counts.normal }}</p>
+            </div>
+        </div>
+
+        <!-- Potential Waste Alert
+        <div class="bg-white p-4 rounded-lg shadow-lg mb-6">
+            <h2 class="text-xl font-bold text-red-600 mb-2">💰 Potential Waste Cost</h2>
+            <p class="text-3xl font-bold text-gray-800">${{ "%.2f"|format(total_potential_waste) }}</p>
+            <p class="text-sm text-gray-600">Estimated loss if at-risk items expire</p>
+        </div> -->
+
+        <!-- Expired Items Alert -->
+        {% if alerts.expired %}
+        <div class="bg-red-100 border-l-4 border-red-500 p-4 mb-6">
+            <h3 class="text-lg font-bold text-red-700 mb-2">⚠️ EXPIRED ITEMS - IMMEDIATE ACTION REQUIRED</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {% for alert in alerts.expired %}
+                <div class="bg-white p-3 rounded shadow">
+                    <span class="font-semibold">{{ alert.item.name }}</span> - 
+                    <span class="text-red-600">{{ alert.item.quantity }} {{ alert.item.unit }}</span>
+                    <span class="text-sm text-gray-600">(Expired: {{ alert.item.expiration_date }})</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Critical Items -->
+        {% if alerts.critical %}
+        <div class="bg-orange-100 border-l-4 border-orange-500 p-4 mb-6">
+            <h3 class="text-lg font-bold text-orange-700 mb-2">🔴 CRITICAL - Use Within 3 Days</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {% for alert in alerts.critical %}
+                <div class="bg-white p-3 rounded shadow">
+                    <span class="font-semibold">{{ alert.item.name }}</span> - 
+                    <span class="text-orange-600">{{ alert.days_remaining }} days left</span>
+                    <span class="text-sm text-gray-600">({{ alert.item.quantity }} {{ alert.item.unit }})</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Top Risk Items Table -->
+        <div class="bg-white p-4 rounded-lg shadow-lg">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">🎯 Top Risk Items (Lowest Safety Scores)</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="bg-gray-200 text-gray-700">
+                            <th class="p-2">Item</th>
+                            <th class="p-2">Safety Score</th>
+                            <th class="p-2">Risk Level</th>
+                            <th class="p-2">Quantity</th>
+                            <th class="p-2">Expiry Date</th>
+                            <!-- <th class="p-2">Potential Loss</th> -->
+                            <th class="p-2">Recommendations</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for analysis in safety_analysis %}
+                        <tr class="border-t hover:bg-gray-50">
+                            <td class="p-2 font-semibold">{{ analysis.item.name }}</td>
+                            <td class="p-2">
+                                <span class="px-2 py-1 rounded text-white" 
+                                      style="background-color: {% if analysis.safety_score < 40 %}#FF0000{% elif analysis.safety_score < 60 %}#FFA500{% elif analysis.safety_score < 80 %}#FFD700{% else %}#00FF00{% endif %}">
+                                    {{ analysis.safety_score }}/100
+                                </span>
+                            </td>
+                            <td class="p-2">
+                                <span class="px-2 py-1 rounded text-white" 
+                                      style="background-color: {{ analysis.risk_color }}">
+                                    {{ analysis.risk_level }}
+                                </span>
+                            </td>
+                            <td class="p-2">{{ analysis.item.quantity }} {{ analysis.item.unit }}</td>
+                            <td class="p-2">{{ analysis.item.expiration_date or 'N/A' }}</td>
+                            <!-- <td class="p-2 text-red-600 font-semibold">${{ "%.2f"|format(analysis.potential_waste_cost) }}</td> -->
+                            <td class="p-2">
+                                {% for rec in analysis.recommendations[:2] %}
+                                <div class="text-sm">{{ rec }}</div>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="mt-6 flex gap-4">
+            <button onclick="window.location.href='{{ url_for('add_item') }}'" 
+                    class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                ➕ Add New Item
+            </button>
+            <button onclick="sendBulkAlerts()" 
+                    class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
+                📧 Send Bulk Alerts
+            </button>
+            <!-- <button onclick="window.print()" 
+                    class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">
+                🖨️ Print Report -->
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function sendBulkAlerts() {
+    if (confirm('Send email alerts for all expiring items?')) {
+        // You can implement this to trigger Lambda for all expiring items
+        alert('Bulk alerts feature coming soon!');
+    }
+}
+</script>
+{% endblock %}
