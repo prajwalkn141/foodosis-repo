@@ -14,4 +14,4 @@ Foodosis is a simple inventory management app built for the Cloud Platform Progr
 Use Elastic Beanstalk (upload ZIP of project).
 
 ## Testing
-Run `pytest` in terminal for tests.
+Run `pytest` in terminal for test
