@@ -111,8 +111,7 @@
                                 </span>
                             </td>
                             <td class="p-2">
-                                <span class="px-2 py-1 rounded text-white" 
-                                      style="background-color: {{ analysis.risk_color }}">
+                                <span class="px-2 py-1 rounded text-white" style="background-color: {{ analysis.risk_color }}">
                                     {{ analysis.risk_level }}
                                 </span>
                             </td>
@@ -133,18 +132,20 @@
 
         <!-- Action Buttons -->
         <div class="mt-6 flex gap-4">
-            <button onclick="window.location.href='{{ url_for('add_item') }}'" 
-                    class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-                ➕ Add New Item
-            </button>
-            <button onclick="sendBulkAlerts()" 
+            <form action="{{ url_for('add_item') }}" method="get">
+    <button type="submit"
+            class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+        ➕ Add New Item
+    </button>
+</form>
+            <!-- <button onclick="sendBulkAlerts()" 
                     class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
                 📧 Send Bulk Alerts
-            </button>
+            </button> -->
             <!-- <button onclick="window.print()" 
                     class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">
-                🖨️ Print Report -->
-            </button>
+                🖨️ Print Report
+            </button> -->
         </div>
     </div>
 </div>
