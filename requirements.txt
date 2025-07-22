@@ -6,3 +6,4 @@ python-dotenv==1.0.1
 flask-session==0.8.0
 flask-bcrypt==1.0.1
 food-safety-lib==0.0.0  
+gunicorn==21.2.0  # Add this line
